@@ -1,41 +1,62 @@
-name: Build, Test, and Deploy to Azure Container Apps
+name: Build, Test, Docker Push, Deploy to Azure Container Apps
 
 on:
   workflow_dispatch:
 
 permissions:
   contents: read
+  id-token: write
 
 jobs:
-  build-test-deploy:
+  build-deploy:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout code
+      # 1. Get code
+      - name: Checkout repository
         uses: actions/checkout@v4
 
+      # 2. Setup Node
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 22
 
+      # 3. Install dependencies
       - name: Install dependencies
         run: npm install
 
+      # 4. Run tests
       - name: Run tests
         run: npm test --if-present
 
-      - name: Azure Login (OIDC)
+      # 5. Azure Login (OIDC - NO SECRET)
+      - name: Azure Login
         uses: azure/login@v2
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Build & Deploy to Azure Container Apps
+      # 6. Login to Docker Hub
+      - name: Docker Login
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # 7. Build Docker image
+      - name: Build image
+        run: docker build -t ${{ secrets.DOCKERHUB_USERNAME }}/frontendapp-node:${{ github.sha }} .
+
+      # 8. Push Docker image
+      - name: Push image
+        run: docker push ${{ secrets.DOCKERHUB_USERNAME }}/frontendapp-node:${{ github.sha }}
+
+      # 9. Deploy to Azure Container Apps
+      - name: Deploy to Azure
         uses: azure/container-apps-deploy-action@v2
         with:
-          appSourcePath: ${{ github.workspace }}
           resourceGroup: container-labs-rg
           containerAppName: frontendapp
-          imageToBuild: frontendapp:${{ github.sha }}
+          imageToDeploy: ${{ secrets.DOCKERHUB_USERNAME }}/frontendapp-node:${{ github.sha }}
