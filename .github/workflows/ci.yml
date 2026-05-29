@@ -1,4 +1,4 @@
-name: Build, Test, Docker Push, Deploy to Azure Container Apps
+name: Build, Test, Push Docker Image, Deploy to Azure Web App
 
 on:
   workflow_dispatch:
@@ -7,56 +7,61 @@ permissions:
   contents: read
   id-token: write
 
+env:
+  IMAGE_NAME: ${{ secrets.DOCKERHUB_USERNAME }}/frontendapp-node
+  RESOURCE_GROUP: web-labs-rg-lalai
+  WEBAPP_NAME: frontendapp-web-lalai
+  APP_PORT: 3000
+
 jobs:
-  build-deploy:
+  build:
     runs-on: ubuntu-latest
 
     steps:
-      # 1. Get code
-      - name: Checkout repository
+      - name: Checkout code
         uses: actions/checkout@v4
 
-      # 2. Setup Node
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 22
 
-      # 3. Install dependencies
       - name: Install dependencies
-        run: npm install
+        run: npm ci
 
-      # 4. Run tests
       - name: Run tests
         run: npm test --if-present
 
-      # 5. Azure Login (OIDC - NO SECRET)
-      - name: Azure Login
+      - name: Login to Azure (OIDC)
         uses: azure/login@v2
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      # 6. Login to Docker Hub
-      - name: Docker Login
+      - name: Login to Docker Hub
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      # 7. Build Docker image
-      - name: Build image
-        run: docker build -t ${{ secrets.DOCKERHUB_USERNAME }}/frontendapp-node:${{ github.sha }} .
-
-      # 8. Push Docker image
-      - name: Push image
-        run: docker push ${{ secrets.DOCKERHUB_USERNAME }}/frontendapp-node:${{ github.sha }}
-
-      # 9. Deploy to Azure Container Apps
-      - name: Deploy to Azure
-        uses: azure/container-apps-deploy-action@v2
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v6
         with:
-          resourceGroup: container-labs-rg
-          containerAppName: frontendapp
-          imageToDeploy: ${{ secrets.DOCKERHUB_USERNAME }}/frontendapp-node:${{ github.sha }}
+          context: .
+          push: true
+          tags: |
+            ${{ env.IMAGE_NAME }}:${{ github.sha }}
+            ${{ env.IMAGE_NAME }}:latest
+
+      - name: Deploy to Azure Web App
+        run: |
+          az webapp config container set \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --name ${{ env.WEBAPP_NAME }} \
+            --container-image-name ${{ env.IMAGE_NAME }}:${{ github.sha }} \
+            --container-registry-url https://index.docker.io
+
+          az webapp restart \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --name ${{ env.WEBAPP_NAME }}
